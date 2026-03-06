@@ -72,7 +72,7 @@ def process_timeseries_and_make_graphs(timeseries_folder, start_time, end_time):
 
 
 '''
-Multiply two gaze_on_face timeseries together in order to obtain a csv and graph for when both gazes are on faces.
+Multiply two gaze_on_face timeseries together in order to obtain a csv and graph for when both gazes are on faces
 '''
 
 
