@@ -2,6 +2,102 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import UnivariateSpline
+from pathlib import Path
+
+
+class GraphObj:
+    def __init__(self, axis_title, is_step, show_blinks, file_path, column_name, range):
+        self.axis_title = axis_title                    # string
+        self.is_step = is_step                          # boolean
+        self.show_blinks = show_blinks                  # boolean
+        self.file_path = file_path                      # Path object (path to the csv)
+        self.column_name = column_name                  # string (the name of the timeseries column in the csv)
+        self.range = range                              # tuple of float or int (y-axis range)
+
+
+
+
+'''
+All of the rest of this file after this first function are older graphing methods from before generalizing.
+'''
+
+
+def make_graphs(graphs_list: list[GraphObj], save_folder: Path, output_filename):
+    num_graphs = len(graphs_list)
+    configs = []
+    time_s = 0
+
+    # Initialize DataFrames and Configs
+    for i in range(len(graphs_list)):
+        df1 = pd.read_csv(graphs_list[i].file_path)
+
+        # Use the first graph's timeseries file to define the timebase for all the graphs
+        if i == 0:
+            time_window = df1["timestamp [ns]"]
+            # Convert time to seconds for plotting
+            time_s = (time_window - time_window.iloc[0]) * 1e-9
+
+        if graphs_list[i].is_step:
+            configs.append(
+                dict(
+                    df=df1, time=time_s, signal=df1[graphs_list[i].column_name], ylim=graphs_list[i].range,
+                    ylabel=graphs_list[i].axis_title, kind="step", show_blinks=graphs_list[i].show_blinks
+                )
+            )
+        else:
+            configs.append(
+                dict(df=df1, time_col="timestamp [ns]", val_col=graphs_list[i].column_name,
+                     transform=lambda s: s.astype(float), ylim=graphs_list[i].range,
+                     ylabel=graphs_list[i].axis_title, kind="line", show_blinks=graphs_list[i].show_blinks
+                )
+            )
+
+    if num_graphs == 1:
+        fig, axes = plt.subplots(1, 1, sharex=True, figsize=(4, 4))
+    else:
+        fig, axes = plt.subplots(num_graphs, 1, sharex=True, figsize=(4*num_graphs, 8))
+
+    # Create and save plot
+    for ax, cfg in zip(axes, configs):
+
+        if cfg["kind"] != "step":
+            t = cfg["df"][cfg["time_col"]]
+            y_raw = cfg["df"][cfg["val_col"]]
+            y = cfg["transform"](y_raw)
+            t_s = (t - t.iloc[0]) * 1e-9
+            ax.step(t_s, y, where="post")
+        else:
+            t_s = cfg["time"]
+            y = cfg["signal"]
+            ax.plot(t_s, y)
+
+        ymin, ymax = cfg["ylim"]
+        if ymin != -1 or ymax != -1:   # If range = (-1, -1), just fit the range to the data
+            ax.set_ylim(cfg["ylim"])
+        ax.set_ylabel(cfg["ylabel"])
+
+        # Display blink windows
+        if cfg["show_blinks"]:
+            signal_blinks = cfg["df"]["blinks"]
+            ymin, ymax = ax.get_ylim()
+            blink_scaled = signal_blinks * (ymax - ymin) + ymin
+            ax.step(time_s, blink_scaled, where="post",
+                    color="green", alpha=0.2)
+
+    # Some cosmetic modification
+    for ax in axes:
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+    axes[-1].set_xlabel("Time (s)")
+    plt.subplots_adjust(hspace=0.25, left=0.15)
+
+    # Make output directory
+    save_folder.mkdir(exist_ok=True)
+    plt.savefig(save_folder / output_filename, dpi=300, bbox_inches="tight")
+    plt.close()
+
+
 '''
 Function graph() for plotting the timeseries and saving as png. We parameterize:
     a) The folder containing the timeseries
@@ -151,8 +247,7 @@ def graph_gaze_on_face(timeseries_folder, y_axis_title, timeseries_filename="fil
     df = pd.read_csv(csv_path)
 
     time_window = df["timestamp [ns]"]
-    var_vals = df["gaze on face"]
-    signal = (var_vals.astype(str).str.strip().str.upper() == "TRUE").astype(int)
+    signal = df["gaze on face"]
 
     # Convert time to seconds for plotting
     time_s = (time_window - time_window.iloc[0]) * 1e-9
@@ -496,7 +591,7 @@ def combined_gazes_on_faces_interpolate_blinks(timeseries_folder_1, timeseries_f
     # Initialize boxcar signal
     signal_blinks1 = np.zeros(len(time_window), dtype=int)
 
-    # Fill in 1s for all times that saccades are happening
+    # Fill in 1s for all times that blinks are happening
     for _, row in blinks1_df.iterrows():
         blink_start = row["start timestamp [ns]"]
         blink_end = row["end timestamp [ns]"]
@@ -510,44 +605,26 @@ def combined_gazes_on_faces_interpolate_blinks(timeseries_folder_1, timeseries_f
     # Initialize boxcar signal
     signal_blinks2 = np.zeros(len(time_window), dtype=int)
 
-    # Fill in 1s for all times that saccades are happening
+    # Fill in 1s for all times that blinks are happening
     for _, row in blinks2_df.iterrows():
         blink_start = row["start timestamp [ns]"]
         blink_end = row["end timestamp [ns]"]
 
         active = (time_window >= blink_start) & (time_window <= blink_end)
         signal_blinks2[active] = 1
-    '''
-    # PLOTTING
-    dfs = [df1, df2, df3]
-    labels = ["Subject 1's \nGaze on Face", "Subject 2's \nGaze on Face", "Mutual Gaze"]
 
-    fig, axes = plt.subplots(3, 1, sharex=True, figsize=(12, 6))
-
-    for ax, df, label in zip(axes, dfs, labels):
-        time_window = df["timestamp [ns]"]
-        var_vals = df["gaze on face"]
-        signal = (var_vals.astype(str).str.strip().str.upper() == "TRUE").astype(int)
-
-        time_s = (time_window - time_window.iloc[0]) * 1e-9
-
-        ax.step(time_s, signal, where="post")
-        ax.set_ylim(-0.5, 1.5)
-        ax.set_yticks([0, 1])
-        ax.set_ylabel(label)
-    '''
     # Define all 3 data plots in terms of names, data streams, and data ranges
     signal3 = (df3["gaze on face"].astype(str).str.strip().str.upper() == "TRUE").astype(int)
     configs = [
-        # Gaze x position
+        # Gaze on face subject 1
         dict(time=time_s, signal=b1_filled,
              ylim=(-0.5, 1.5), ylabel="Subject 1's \nGaze on Face", kind="step"),
 
-        # Gaze y position
+        # Gaze on face subject 2
         dict(time=time_s, signal=b2_filled,
              ylim=(-0.5, 1.5), ylabel="Subject 2's \nGaze on Face", kind="step"),
 
-        # Pupil Diameter (right)
+        # Mutual gaze
         dict(time=time_s, signal=signal3,
              ylim=(-0.5, 1.5), ylabel="Mutual Gaze", kind="step")
     ]
@@ -707,7 +784,7 @@ def combined_x_y_pupils_interpolate_blinks(timeseries_folder, DERIV_THRESH):
     # Initialize boxcar signal
     signal_blinks = np.zeros(len(time_window), dtype=int)
 
-    # Fill in 1s for all times that saccades are happening
+    # Fill in 1s for all times that blinks are happening
     for _, row in blinks_df.iterrows():
         blink_start = row["start timestamp [ns]"]
         blink_end = row["end timestamp [ns]"]
@@ -772,8 +849,8 @@ def combined_x_y_pupils_interpolate_blinks(timeseries_folder, DERIV_THRESH):
     spline = UnivariateSpline(
         time_s[valid],
         gaze_x_clean[valid],
-        k=3,  # cubic spline
-        s=50
+        k=1,  # cubic spline
+        s=0
     )
 
     gaze_x_interp = spline(time_s)
@@ -788,8 +865,8 @@ def combined_x_y_pupils_interpolate_blinks(timeseries_folder, DERIV_THRESH):
     spline = UnivariateSpline(
         time_s[valid],
         gaze_y_clean[valid],
-        k=3,  # cubic spline
-        s=50
+        k=1,  # linear, but turn this number up for quadratic or cubic spline
+        s=0
     )
 
     gaze_y_interp = spline(time_s)
@@ -804,8 +881,8 @@ def combined_x_y_pupils_interpolate_blinks(timeseries_folder, DERIV_THRESH):
     spline = UnivariateSpline(
         time_s[valid],
         pupil_clean[valid],
-        k=3,  # degree of spline
-        s=50
+        k=1,  # degree of spline
+        s=0
     )
 
     pupil_interp = spline(time_s)
