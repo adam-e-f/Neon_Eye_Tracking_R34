@@ -1,10 +1,16 @@
 import os
+import sys
 
 import pandas as pd
 from pathlib import Path
 import filter_timeseries_between_events
 import make_timeseries_graph
 from make_timeseries_graph import GraphObj
+import process_timeseries_files
+import regress_out_lighting
+
+import subprocess
+import json
 
 
 '''
@@ -105,154 +111,310 @@ def merge_mutual_gaze_csv(project_folder):
     out_df.to_csv(output_path, index=False)
 
 
-# events_file_path1 = Path(r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test3\glasses1_timeseries\export\events.csv")
-events_file_path2 = Path(r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test3\glasses2_timeseries\2026-02-11_00-23-44-b5e2cb4f\events.csv")
+def run_main():
 
-start_event = "clip_start"
-end_event = "clip_end"
+    events_file_path = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses1_timeseries\2026-02-11_00-23-47-47b67625\events.csv")
+    start_event = "curtains_down"
+    end_event = "convo_end"
+    events_df2 = pd.read_csv(events_file_path)
 
-events_df2 = pd.read_csv(events_file_path2)
+    start_time = events_df2.loc[events_df2["name"] == start_event, "timestamp [ns]"].iloc[0]
+    end_time = events_df2.loc[events_df2["name"] == end_event, "timestamp [ns]"].iloc[0]
 
-start_time = events_df2.loc[events_df2["name"] == start_event, "timestamp [ns]"].iloc[0]
-end_time = events_df2.loc[events_df2["name"] == end_event, "timestamp [ns]"].iloc[0]
+    main_folder = Path(r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5")
 
-# Process data from glasses1 and make corresponding graphs
-timeseries_folder_glasses1 = Path(
-    r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test4\glasses1_timeseries\2026-02-11_00-23-47-47b67625"
-)
-process_timeseries_and_make_graphs(timeseries_folder_glasses1, start_time, end_time)
-filter_timeseries_between_events.combine(timeseries_folder_glasses1, 500)
+    ts_folder_glasses1 = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses1_timeseries\2026-02-11_00-23-47-47b67625")
+    ts_folder_glasses2 = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses2_timeseries\2026-02-11_00-23-44-b5e2cb4f")
 
-# Process data from glasses2 and make corresponding graphs
-timeseries_folder_glasses2 = Path(
-    r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test4\glasses2_timeseries\2026-02-11_00-23-44-b5e2cb4f"
-)
-process_timeseries_and_make_graphs(timeseries_folder_glasses2, start_time, end_time)
-filter_timeseries_between_events.combine(timeseries_folder_glasses2, 500)
+    process_timeseries_and_make_graphs(ts_folder_glasses1, start_time, end_time)
+    filter_timeseries_between_events.combine(ts_folder_glasses1, 500)
 
-# Make csv and graph for when both gazes are on faces (both wearers are looking at each other)
+    process_timeseries_and_make_graphs(ts_folder_glasses2, start_time, end_time)
+    filter_timeseries_between_events.combine(ts_folder_glasses2, 500)
 
-gaze_on_face_glasses1 = timeseries_folder_glasses1 / "filtered_gaze_on_face.csv"
-gaze_on_face_glasses2 = timeseries_folder_glasses2 / "filtered_gaze_on_face.csv"
-main_folder = Path(r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test4")
+    # RUN GAZE-ON-FACIAL-LANDMARKS ON BOTH SUBJECTS' FOLDERS
+    params = {
+        "face_mapper_output_folder": str(ts_folder_glasses1),
+        "raw_data_output_folder": str(ts_folder_glasses1),
+        "aoi_radius": 30,
+        "ellipse_size": 30,
+        "gaze_circle_size": 9,
+    }
+    subprocess.run([
+        sys.executable,
+        "run_gaze_on_landmarks.py",
+        json.dumps(params)
+    ])
 
-# both_gazes_on_faces(gaze_on_face_glasses1, gaze_on_face_glasses2, main_folder)
+    params = {
+        "face_mapper_output_folder": str(ts_folder_glasses2),
+        "raw_data_output_folder": str(ts_folder_glasses2),
+        "aoi_radius": 30,
+        "ellipse_size": 30,
+        "gaze_circle_size": 9,
+    }
+    subprocess.run([
+        sys.executable,
+        "run_gaze_on_landmarks.py",
+        json.dumps(params)
+    ])
 
-make_timeseries_graph.combined_gazes_on_faces(timeseries_folder_glasses1, timeseries_folder_glasses2, main_folder)
+    # Extract boxcars for each facial landmark
+    landmarks1_path = ts_folder_glasses1 / "gaze_on_facial_landmarks" / "merged_data.csv"
+    landmarks2_path = ts_folder_glasses2 / "gaze_on_facial_landmarks" / "merged_data.csv"
 
-make_timeseries_graph.combined_gazes_on_faces_interpolate_blinks(
-    timeseries_folder_glasses1, timeseries_folder_glasses2, main_folder, 500
-)
+    process_timeseries_files.extract_landmark_timeseries(landmarks1_path, ts_folder_glasses1)
+    process_timeseries_files.extract_landmark_timeseries(landmarks2_path, ts_folder_glasses2)
 
-merge_mutual_gaze_csv(main_folder)
+    # Filter gaze on facial landmarks csv files to correct time window
+    filter_timeseries_between_events.get_filtered_series(
+        ts_folder_glasses1, "gaze_on_facial_landmarks.csv", start_time, end_time)
 
-# GRAPHING - G1 = glasses1, G2 = glasses2
-combined_1_path = timeseries_folder_glasses1 / "combined_timeseries.csv"
-combined_2_path = timeseries_folder_glasses2 / "combined_timeseries.csv"
-imu_1_path = timeseries_folder_glasses1 / "filtered_imu.csv"
-imu_2_path = timeseries_folder_glasses2 / "filtered_imu.csv"
+    filter_timeseries_between_events.get_filtered_series(
+        ts_folder_glasses2, "gaze_on_facial_landmarks.csv", start_time, end_time)
 
-gaze_x_G1 = GraphObj(axis_title="Gaze x\nPosition", is_step=False, show_blinks=True,
-                     file_path=combined_1_path, column_name="gaze x [px]", range=(0, 1600))
-gaze_x_G2 = GraphObj(axis_title="Gaze x\nPosition", is_step=False, show_blinks=True,
-                     file_path=combined_2_path, column_name="gaze x [px]", range=(0, 1600))
-gaze_y_G1 = GraphObj(axis_title="Gaze y\nPosition", is_step=False, show_blinks=True,
-                     file_path=combined_1_path, column_name="gaze y [px]", range=(0, 1200))
-gaze_y_G2 = GraphObj(axis_title="Gaze y\nPosition", is_step=False, show_blinks=True,
-                     file_path=combined_2_path, column_name="gaze y [px]", range=(0, 1200))
+    # Interpolate over blinks
+    filtered_landmarks1_path = ts_folder_glasses1 / "filtered_gaze_on_facial_landmarks.csv"
+    filtered_landmarks2_path = ts_folder_glasses2 / "filtered_gaze_on_facial_landmarks.csv"
+    col_labels = ["Not on landmark", "eye left", "eye right", "nose", "mouth"]
+    blinks1_path = ts_folder_glasses1 / "blinks.csv"
+    blinks2_path = ts_folder_glasses2 / "blinks.csv"
 
-pupil_right_G1 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=True,
-                          file_path=combined_1_path, column_name="pupil diameter right [mm]", range=(0, 6))
-pupil_right_G2 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=True,
-                          file_path=combined_2_path, column_name="pupil diameter right [mm]", range=(0, 6))
-pupil_left_G1 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=True,
-                         file_path=combined_1_path, column_name="pupil diameter left [mm]", range=(0, 6))
-pupil_left_G2 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=True,
-                         file_path=combined_2_path, column_name="pupil diameter left [mm]", range=(0, 6))
+    process_timeseries_files.interpolate_blinks(filtered_landmarks1_path, col_labels, blinks1_path, True, 500)
+    process_timeseries_files.interpolate_blinks(filtered_landmarks2_path, col_labels, blinks2_path, True, 500)
 
-gaze_on_face_G1 = GraphObj(axis_title="Subject 1's\nGaze on Face", is_step=True, show_blinks=True,
-                           file_path=combined_1_path, column_name="gaze on face", range=(-0.5, 1.5))
-gaze_on_face_G2 = GraphObj(axis_title="Subject 2's\nGaze on Face", is_step=True, show_blinks=True,
-                           file_path=combined_2_path, column_name="gaze on face", range=(-0.5, 1.5))
+    # Generate mutual eye contact csv
+    interp_landmarks1_path = ts_folder_glasses1 / "filtered_gaze_on_facial_landmarks_interpolated_blinks.csv"
+    interp_landmarks2_path = ts_folder_glasses2 / "filtered_gaze_on_facial_landmarks_interpolated_blinks.csv"
+    eye_contact_path = main_folder / "mutual_eye_contact.csv"
 
-roll_G1 = GraphObj(axis_title="Roll [deg]", is_step=False, show_blinks=False,
-                   file_path=imu_1_path, column_name="roll [deg]", range=(-1, -1))
-roll_G2 = GraphObj(axis_title="Roll [deg]", is_step=False, show_blinks=False,
-                   file_path=imu_2_path, column_name="roll [deg]", range=(-1, -1))
-pitch_G1 = GraphObj(axis_title="Pitch [deg]", is_step=False, show_blinks=False,
-                    file_path=imu_1_path, column_name="pitch [deg]", range=(-1, -1))
-pitch_G2 = GraphObj(axis_title="Pitch [deg]", is_step=False, show_blinks=False,
-                    file_path=imu_2_path, column_name="pitch [deg]", range=(-1, -1))
-yaw_G1 = GraphObj(axis_title="Yaw [deg]", is_step=False, show_blinks=False,
-                  file_path=imu_1_path, column_name="yaw [deg]", range=(-1, -1))
-yaw_G2 = GraphObj(axis_title="Yaw [deg]", is_step=False, show_blinks=False,
-                  file_path=imu_2_path, column_name="yaw [deg]", range=(-1, -1))
+    process_timeseries_files.mutual_eye_contact(interp_landmarks1_path, interp_landmarks2_path, eye_contact_path)
 
-gyro_x_G1 = GraphObj(axis_title="Gyro x\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_1_path, column_name="gyro x [deg/s]", range=(-1, -1))
-gyro_x_G2 = GraphObj(axis_title="Gyro x\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_2_path, column_name="gyro x [deg/s]", range=(-1, -1))
-gyro_y_G1 = GraphObj(axis_title="Gyro y\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_1_path, column_name="gyro y [deg/s]", range=(-1, -1))
-gyro_y_G2 = GraphObj(axis_title="Gyro y\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_2_path, column_name="gyro y [deg/s]", range=(-1, -1))
-gyro_z_G1 = GraphObj(axis_title="Gyro z\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_1_path, column_name="gyro z [deg/s]", range=(-1, -1))
-gyro_z_G2 = GraphObj(axis_title="Gyro z\n[deg/s]", is_step=False, show_blinks=False,
-                     file_path=imu_2_path, column_name="gyro z [deg/s]", range=(-1, -1))
+    # INTERPOLATE OUT LIGHTING FROM PUPIL DIAMETER AND RUN CORRELATION ANALYSES
+    glasses1_no_overlay_video, = ts_folder_glasses1.glob("*.mp4")
+    glasses2_no_overlay_video, = ts_folder_glasses2.glob("*.mp4")
 
-make_timeseries_graph.make_graphs(
-    graphs_list=[gaze_x_G1, gaze_y_G1, pupil_right_G1],
-    save_folder=timeseries_folder_glasses1/"graphs",
-    output_filename="combined_eye_states.png"
-)
-make_timeseries_graph.make_graphs(
-    graphs_list=[gaze_x_G2, gaze_y_G2, pupil_right_G2],
-    save_folder=timeseries_folder_glasses2/"graphs",
-    output_filename="combined_eye_states.png"
-)
+    # Extract average lighting levels from each frame of the no_overlay_video to get time series of illumination
+    regress_out_lighting.extract_illumination_levels(glasses1_no_overlay_video, ts_folder_glasses1)
+    regress_out_lighting.extract_illumination_levels(glasses2_no_overlay_video, ts_folder_glasses2)
 
-make_timeseries_graph.make_graphs(
-    graphs_list=[roll_G1, pitch_G1, yaw_G1],
-    save_folder=timeseries_folder_glasses1/"graphs",
-    output_filename="roll_pitch_yaw.png"
-)
-make_timeseries_graph.make_graphs(
-    graphs_list=[roll_G2, pitch_G2, yaw_G2],
-    save_folder=timeseries_folder_glasses2/"graphs",
-    output_filename="roll_pitch_yaw.png"
-)
+    filter_timeseries_between_events.get_filtered_series(
+        ts_folder_glasses1, "scene_illumination_levels.csv", start_time, end_time)
+    filter_timeseries_between_events.get_filtered_series(
+        ts_folder_glasses2, "scene_illumination_levels.csv", start_time, end_time)
 
-make_timeseries_graph.make_graphs(
-    graphs_list=[gyro_x_G1, gyro_y_G1, gyro_z_G1],
-    save_folder=timeseries_folder_glasses1/"graphs",
-    output_filename="gyro_xyz.png"
-)
-make_timeseries_graph.make_graphs(
-    graphs_list=[gyro_x_G2, gyro_y_G2, gyro_z_G2],
-    save_folder=timeseries_folder_glasses2/"graphs",
-    output_filename="gyro_xyz.png"
-)
+    print("Subject 1:")
+    regress_out_lighting.check_correlation_lighting_eye_contact(main_folder, ts_folder_glasses1)
+    print("Subject 2:")
+    regress_out_lighting.check_correlation_lighting_eye_contact(main_folder, ts_folder_glasses2)
+
+    eye_states_path1 = ts_folder_glasses1 / "3d_eye_states.csv"
+    eye_states_path2 = ts_folder_glasses2 / "3d_eye_states.csv"
+    illum_levels_path1 = ts_folder_glasses1 / "scene_illumination_levels.csv"
+    illum_levels_path2 = ts_folder_glasses2 / "scene_illumination_levels.csv"
+
+    print("Subject 1:")
+    regress_out_lighting.regress_lighting_from_pupil_diameter(eye_states_path1, illum_levels_path1)
+    print("Subject 2:")
+    regress_out_lighting.regress_lighting_from_pupil_diameter(eye_states_path2, illum_levels_path2)
+
+    pupil_path_corrected1 = ts_folder_glasses1 / "light-corrected_pupil_diameters.csv"
+    pupil_path_corrected2 = ts_folder_glasses2 / "light-corrected_pupil_diameters.csv"
+
+    pupil_right_G1 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=False,
+                              file_path=eye_states_path1, column_name="pupil diameter right [mm]", range=(0, 6))
+    pupil_right_G2 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=False,
+                              file_path=eye_states_path2, column_name="pupil diameter right [mm]", range=(0, 6))
+    pupil_left_G1 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=False,
+                             file_path=eye_states_path1, column_name="pupil diameter left [mm]", range=(0, 6))
+    pupil_left_G2 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=False,
+                             file_path=eye_states_path2, column_name="pupil diameter left [mm]", range=(0, 6))
+
+    pupil_right_corrected_G1 = GraphObj(axis_title="Light-Corrected Pupil Diameter\nRight [mm]", is_step=False, show_blinks=False,
+                              file_path=pupil_path_corrected1, column_name="pupil_right", range=(0, 6))
+    pupil_right_corrected_G2 = GraphObj(axis_title="Light-Corrected Pupil Diameter\nRight [mm]", is_step=False, show_blinks=False,
+                              file_path=pupil_path_corrected2, column_name="pupil_right", range=(0, 6))
+    pupil_left_corrected_G1 = GraphObj(axis_title="Light-Corrected Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=False,
+                             file_path=pupil_path_corrected1, column_name="pupil_left", range=(0, 6))
+    pupil_left_corrected_G2 = GraphObj(axis_title="Light-Corrected Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=False,
+                             file_path=pupil_path_corrected2, column_name="pupil_left", range=(0, 6))
+
+    make_timeseries_graph.make_graphs(
+        graphs_list=[pupil_right_G1, pupil_right_corrected_G1],
+        save_folder=ts_folder_glasses1/"graphs",
+        output_filename="pupil_right_before_and_after_light_correction.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[pupil_left_G1, pupil_left_corrected_G1],
+        save_folder=ts_folder_glasses1 / "graphs",
+        output_filename="pupil_left_before_and_after_light_correction.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[pupil_right_G2, pupil_right_corrected_G2],
+        save_folder=ts_folder_glasses2 / "graphs",
+        output_filename="pupil_right_before_and_after_light_correction.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[pupil_left_G2, pupil_left_corrected_G2],
+        save_folder=ts_folder_glasses2 / "graphs",
+        output_filename="pupil_left_before_and_after_light_correction.png"
+    )
+
+    '''
+    ###
+    # NEED TO SEE IF WE STILL CARE ABOUT THIS METRIC FOR GAZE ON FACE NOW THAT WE HAVE EYE CONTACT AS A METRIC.
+    make_timeseries_graph.combined_gazes_on_faces(ts_folder_glasses1, ts_folder_glasses2, main_folder)
+
+    make_timeseries_graph.combined_gazes_on_faces_interpolate_blinks(
+        ts_folder_glasses1, ts_folder_glasses2, main_folder, 500
+    )
+
+    merge_mutual_gaze_csv(main_folder)
+    ###
+
+    # GRAPHING - G1 = glasses1, G2 = glasses2
+    combined_1_path = ts_folder_glasses1 / "combined_timeseries.csv"
+    combined_2_path = ts_folder_glasses2 / "combined_timeseries.csv"
+    imu_1_path = ts_folder_glasses1 / "filtered_imu.csv"
+    imu_2_path = ts_folder_glasses2 / "filtered_imu.csv"
+
+    gaze_x_G1 = GraphObj(axis_title="Gaze x\nPosition", is_step=False, show_blinks=True,
+                         file_path=combined_1_path, column_name="gaze x [px]", range=(0, 1600))
+    gaze_x_G2 = GraphObj(axis_title="Gaze x\nPosition", is_step=False, show_blinks=True,
+                         file_path=combined_2_path, column_name="gaze x [px]", range=(0, 1600))
+    gaze_y_G1 = GraphObj(axis_title="Gaze y\nPosition", is_step=False, show_blinks=True,
+                         file_path=combined_1_path, column_name="gaze y [px]", range=(0, 1200))
+    gaze_y_G2 = GraphObj(axis_title="Gaze y\nPosition", is_step=False, show_blinks=True,
+                         file_path=combined_2_path, column_name="gaze y [px]", range=(0, 1200))
+
+    pupil_right_G1 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=True,
+                              file_path=combined_1_path, column_name="pupil diameter right [mm]", range=(0, 6))
+    pupil_right_G2 = GraphObj(axis_title="Pupil Diameter\nRight [mm]", is_step=False, show_blinks=True,
+                              file_path=combined_2_path, column_name="pupil diameter right [mm]", range=(0, 6))
+    pupil_left_G1 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=True,
+                             file_path=combined_1_path, column_name="pupil diameter left [mm]", range=(0, 6))
+    pupil_left_G2 = GraphObj(axis_title="Pupil Diameter\nLeft [mm]", is_step=False, show_blinks=True,
+                             file_path=combined_2_path, column_name="pupil diameter left [mm]", range=(0, 6))
+
+    gaze_on_face_G1 = GraphObj(axis_title="Subject 1's\nGaze on Face", is_step=True, show_blinks=True,
+                               file_path=combined_1_path, column_name="gaze on face", range=(-0.5, 1.5))
+    gaze_on_face_G2 = GraphObj(axis_title="Subject 2's\nGaze on Face", is_step=True, show_blinks=True,
+                               file_path=combined_2_path, column_name="gaze on face", range=(-0.5, 1.5))
+
+    roll_G1 = GraphObj(axis_title="Roll [deg]", is_step=False, show_blinks=False,
+                       file_path=imu_1_path, column_name="roll [deg]", range=(-1, -1))
+    roll_G2 = GraphObj(axis_title="Roll [deg]", is_step=False, show_blinks=False,
+                       file_path=imu_2_path, column_name="roll [deg]", range=(-1, -1))
+    pitch_G1 = GraphObj(axis_title="Pitch [deg]", is_step=False, show_blinks=False,
+                        file_path=imu_1_path, column_name="pitch [deg]", range=(-1, -1))
+    pitch_G2 = GraphObj(axis_title="Pitch [deg]", is_step=False, show_blinks=False,
+                        file_path=imu_2_path, column_name="pitch [deg]", range=(-1, -1))
+    yaw_G1 = GraphObj(axis_title="Yaw [deg]", is_step=False, show_blinks=False,
+                      file_path=imu_1_path, column_name="yaw [deg]", range=(-1, -1))
+    yaw_G2 = GraphObj(axis_title="Yaw [deg]", is_step=False, show_blinks=False,
+                      file_path=imu_2_path, column_name="yaw [deg]", range=(-1, -1))
+
+    gyro_x_G1 = GraphObj(axis_title="Gyro x\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_1_path, column_name="gyro x [deg/s]", range=(-1, -1))
+    gyro_x_G2 = GraphObj(axis_title="Gyro x\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_2_path, column_name="gyro x [deg/s]", range=(-1, -1))
+    gyro_y_G1 = GraphObj(axis_title="Gyro y\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_1_path, column_name="gyro y [deg/s]", range=(-1, -1))
+    gyro_y_G2 = GraphObj(axis_title="Gyro y\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_2_path, column_name="gyro y [deg/s]", range=(-1, -1))
+    gyro_z_G1 = GraphObj(axis_title="Gyro z\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_1_path, column_name="gyro z [deg/s]", range=(-1, -1))
+    gyro_z_G2 = GraphObj(axis_title="Gyro z\n[deg/s]", is_step=False, show_blinks=False,
+                         file_path=imu_2_path, column_name="gyro z [deg/s]", range=(-1, -1))
+
+    make_timeseries_graph.make_graphs(
+        graphs_list=[gaze_x_G1, gaze_y_G1, pupil_right_G1],
+        save_folder=ts_folder_glasses1/"graphs",
+        output_filename="combined_eye_states.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[gaze_x_G2, gaze_y_G2, pupil_right_G2],
+        save_folder=ts_folder_glasses2/"graphs",
+        output_filename="combined_eye_states.png"
+    )
+
+    make_timeseries_graph.make_graphs(
+        graphs_list=[roll_G1, pitch_G1, yaw_G1],
+        save_folder=ts_folder_glasses1/"graphs",
+        output_filename="roll_pitch_yaw.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[roll_G2, pitch_G2, yaw_G2],
+        save_folder=ts_folder_glasses2/"graphs",
+        output_filename="roll_pitch_yaw.png"
+    )
+
+    make_timeseries_graph.make_graphs(
+        graphs_list=[gyro_x_G1, gyro_y_G1, gyro_z_G1],
+        save_folder=ts_folder_glasses1/"graphs",
+        output_filename="gyro_xyz.png"
+    )
+    make_timeseries_graph.make_graphs(
+        graphs_list=[gyro_x_G2, gyro_y_G2, gyro_z_G2],
+        save_folder=ts_folder_glasses2/"graphs",
+        output_filename="gyro_xyz.png"
+    )
+    '''
+
+    ''' OLD GRAPHING PROCEDURE
+    make_timeseries_graph.combined_x_y_pupils(timeseries_folder_glasses1)
+    make_timeseries_graph.combined_x_y_pupils(timeseries_folder_glasses2)
+    
+    make_timeseries_graph.combined_x_y_pupils_interpolate_blinks(timeseries_folder_glasses1, 500)
+    make_timeseries_graph.combined_x_y_pupils_interpolate_blinks(timeseries_folder_glasses2, 500)
+    
+    make_timeseries_graph.combined_gazes_on_faces_interpolate_blinks(
+        timeseries_folder_glasses1, timeseries_folder_glasses2, main_folder, 500
+    )
+    
+    make_timeseries_graph.combined_gyro_x_y_z(timeseries_folder_glasses1)
+    make_timeseries_graph.combined_gyro_x_y_z(timeseries_folder_glasses2)
+    
+    make_timeseries_graph.combined_roll_pitch_yaw(timeseries_folder_glasses1)
+    make_timeseries_graph.combined_roll_pitch_yaw(timeseries_folder_glasses2)
+    
+    make_timeseries_graph.combined_imu_acceleration(timeseries_folder_glasses1)
+    make_timeseries_graph.combined_imu_acceleration(timeseries_folder_glasses2)
+    '''
 
 
+if __name__ == "__main__":
+    # run_main()
 
-''' OLD GRAPHING PROCEDURE
-make_timeseries_graph.combined_x_y_pupils(timeseries_folder_glasses1)
-make_timeseries_graph.combined_x_y_pupils(timeseries_folder_glasses2)
+    main_folder = Path(r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5")
 
-make_timeseries_graph.combined_x_y_pupils_interpolate_blinks(timeseries_folder_glasses1, 500)
-make_timeseries_graph.combined_x_y_pupils_interpolate_blinks(timeseries_folder_glasses2, 500)
+    events_file_path = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses1_timeseries\2026-02-11_00-23-47-47b67625\events.csv")
+    start_event = "curtains_down"
+    end_event = "convo_end"
+    events_df2 = pd.read_csv(events_file_path)
 
-make_timeseries_graph.combined_gazes_on_faces_interpolate_blinks(
-    timeseries_folder_glasses1, timeseries_folder_glasses2, main_folder, 500
-)
+    start_time = events_df2.loc[events_df2["name"] == start_event, "timestamp [ns]"].iloc[0]
+    end_time = events_df2.loc[events_df2["name"] == end_event, "timestamp [ns]"].iloc[0]
 
-make_timeseries_graph.combined_gyro_x_y_z(timeseries_folder_glasses1)
-make_timeseries_graph.combined_gyro_x_y_z(timeseries_folder_glasses2)
+    ts_folder_glasses1 = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses1_timeseries\2026-02-11_00-23-47-47b67625")
+    ts_folder_glasses2 = Path(
+        r"C:\Users\adamf\OneDrive\Desktop\MAPLab\r34project\Test5\glasses2_timeseries\2026-02-11_00-23-44-b5e2cb4f")
 
-make_timeseries_graph.combined_roll_pitch_yaw(timeseries_folder_glasses1)
-make_timeseries_graph.combined_roll_pitch_yaw(timeseries_folder_glasses2)
+    eye_contact_events_df = process_timeseries_files.get_eye_contact_events(main_folder / "mutual_eye_contact.csv")
+    combined_df1 = pd.read_csv(ts_folder_glasses1 / "combined_timeseries.csv")
 
-make_timeseries_graph.combined_imu_acceleration(timeseries_folder_glasses1)
-make_timeseries_graph.combined_imu_acceleration(timeseries_folder_glasses2)
-'''
+    # Use pupil diameter right [mm] (raw) for no blink interpolation. Remove the (raw) to use pupil diameters after
+    # blink interpolation.
+    epochs_folder_path = ts_folder_glasses1 / "epoched_by_eye_contact_onset"
+
+    process_timeseries_files.epoch_pupil_by_eye_contact(
+        combined_df1, eye_contact_events_df, epochs_folder_path,
+        pupil_value_col="pupil diameter right [mm]", prefix="pupil_right_blink_interpolated")
+    process_timeseries_files.epoch_pupil_by_eye_contact(
+        combined_df1, eye_contact_events_df, epochs_folder_path,
+        pupil_value_col="pupil diameter left [mm]", prefix="pupil_left_blink_interpolated")

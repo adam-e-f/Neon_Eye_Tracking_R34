@@ -110,17 +110,21 @@ Function graph() for plotting the timeseries and saving as png. We parameterize:
 '''
 
 
-def graph(timeseries_folder, timeseries_filename, plot_title, y_axis_title, var_name, min_val=-1, max_val=-1):
+def graph(timeseries_folder, timeseries_filename, plot_title, y_axis_title, var_name, min_val=-1, max_val=-1,
+          time_column_name="timestamp [ns]", timescale="ns"):
     csv_path = timeseries_folder / timeseries_filename
 
     df = pd.read_csv(csv_path)
-
-    # Extract columns
-    time_ns = df["timestamp [ns]"]
     var_vals = df[var_name]
 
-    # Convert time to seconds (optional but recommended)
-    time_s = (time_ns - time_ns.iloc[0]) * 1e-9
+    if timescale == "ns":
+        # Extract columns
+        time_ns = df[time_column_name]
+
+        # Convert time to seconds (optional but recommended)
+        time_s = (time_ns - time_ns.iloc[0]) * 1e-9
+    else:
+        time_s = df[time_column_name]  # ASSUME ALREADY IN SECONDS
 
     # Plot
     plt.figure()
@@ -294,6 +298,7 @@ def get_segments(mask):
 
 
 # Graph of both people's gaze on face data + the multiplication, i.e., both gazes on faces, all stacked together.
+# This includes the creation of a mutual gaze csv file.
 # ASSUMES filtered_gaze_on_face exists in both timeseries folders.
 def combined_gazes_on_faces(timeseries_folder_1, timeseries_folder_2, output_folder):
     file1_path = timeseries_folder_1 / "filtered_gaze_on_face.csv"
